@@ -10,6 +10,13 @@ from PIL import Image, ImageDraw
 
 from keyboard import key_codes
 
+def socket_receive(sock, size):
+    res = b""
+    while len(res) < size:
+        res += sock.recv(size-len(res))
+
+    return res
+
 class VNCException(Exception):
     pass
 
@@ -26,7 +33,7 @@ class VNC(object):
 
         # == Banner ==
 
-        resp = self.sock.recv(12)
+        resp = socket_receive(self.sock, 12)
 
         if resp[:3] != b"RFB":
             raise Exception("Wrong protocol")
@@ -54,7 +61,7 @@ class VNC(object):
         self.supported_security_types = []
 
         if major == 4 or (major, minor) in [(3, 7), (3, 8)]:
-            resp = self.sock.recv(1)
+            resp = socket_receive(self.sock, 1)
 
             if len(resp) == 0:
                 raise VNCException("Protocol error")
@@ -62,24 +69,24 @@ class VNC(object):
             nb_security_types = ord(resp)
 
             if nb_security_types == 0:
-                resp = self.sock.recv(4)
+                resp = socket_receive(self.sock, 4)
 
                 msg_len = int.from_bytes(resp, byteorder="big")
-                resp = self.sock.recv(msg_len)
+                resp = socket_receive(self.sock, msg_len)
 
                 msg = resp.decode("utf-8")
                 raise VNCException(msg)
 
             logging.info("%s Security types" % nb_security_types)
 
-            resp = self.sock.recv(nb_security_types)
+            resp = socket_receive(self.sock, nb_security_types)
 
             for index in range(0, nb_security_types):
                 sec_type_id = int(resp[index])
                 self.supported_security_types.append(security_type_from_id(sec_type_id))
                 logging.info("> %s" % security_type_from_id(sec_type_id))
         else:
-            resp = self.sock.recv(4)
+            resp = socket_receive(self.sock, 4)
 
             if len(resp) == 0:
                 raise VNCException("Protocol error")
@@ -87,10 +94,10 @@ class VNC(object):
             sec_type_id = ord(resp[3:4])
 
             if sec_type_id == 0:
-                resp = self.sock.recv(4)
+                resp = socket_receive(self.sock, 4)
 
                 msg_len = int.from_bytes(resp, byteorder="big")
-                resp = self.sock.recv(msg_len)
+                resp = socket_receive(self.sock, msg_len)
 
                 msg = resp.decode("utf-8")
                 raise VNCException(msg)
@@ -117,7 +124,7 @@ class VNC(object):
             if major == 4 or (major == 3 and minor >= 7):
                 self.sock.sendall(b"\x02")
 
-            challenge = self.sock.recv(16)
+            challenge = socket_receive(self.sock, 16)
 
             if len(challenge) != 16:
                 raise VNCException("Wrong challenge length")
@@ -134,7 +141,7 @@ class VNC(object):
             logging.debug('enc: %s' % enc)
             self.sock.sendall(enc)
 
-        resp = self.sock.recv(4)
+        resp = socket_receive(self.sock, 4)
         logging.debug('resp: %s' % repr(resp))
 
         response_code = ord(resp[3:4])
@@ -145,10 +152,10 @@ class VNC(object):
             return response_code, 'OK'
         else:
             if major == 4 or (major == 3 and minor >= 8):
-                resp = self.sock.recv(4)
+                resp = socket_receive(self.sock, 4)
 
                 msg_len = int.from_bytes(resp, byteorder="big")
-                resp = self.sock.recv(msg_len)
+                resp = socket_receive(self.sock, msg_len)
 
                 msg = resp.decode("utf-8")
                 return response_code, msg
@@ -176,14 +183,14 @@ class VNC(object):
 
         self.sock.sendall(b'\x01')
 
-        resp = self.sock.recv(20)
+        resp = socket_receive(self.sock, 20)
 
         self.frame_width = int.from_bytes(resp[:2], "big")
         self.frame_height = int.from_bytes(resp[2:4], "big")
 
-        resp = self.sock.recv(4)
+        resp = socket_receive(self.sock, 4)
         name_len = int.from_bytes(resp, "big")
-        resp = self.sock.recv(name_len)
+        resp = socket_receive(self.sock, name_len)
         self.name = resp.decode()
 
         logging.info("Server name: %s" % self.name)
@@ -275,11 +282,11 @@ class VNC(object):
         payload += (self.frame_height).to_bytes(2, byteorder="big") # Height
         self.sock.sendall(payload)
 
-        res = self.sock.recv(4)
+        res = socket_receive(self.sock, 4)
         rect_nb = int.from_bytes(res[2:4], byteorder="big")
 
         for _ in range(rect_nb):
-            res = self.sock.recv(12)
+            res = socket_receive(self.sock, 12)
             rect_x = int.from_bytes(res[:2], byteorder="big")
             rect_y = int.from_bytes(res[2:4], byteorder="big")
             rect_width = int.from_bytes(res[4:6], byteorder="big")
@@ -289,10 +296,7 @@ class VNC(object):
             if encoding != 0:
                 raise VNCException("Unsupported encoding")
 
-            res = b""
-
-            while len(res) < rect_width*rect_height*4:
-                res += self.sock.recv(rect_width*rect_height*4-len(res))
+            res = socket_receive(self.sock, rect_width*rect_height*4)
 
             rect = Image.frombytes("RGBA", (rect_width, rect_height), res)
 
